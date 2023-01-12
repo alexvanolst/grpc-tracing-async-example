@@ -1,24 +1,27 @@
 use hello_world::greeter_client::GreeterClient;
 use hello_world::HelloRequest;
 use opentelemetry::sdk::propagation::TraceContextPropagator;
+use opentelemetry::trace::TraceContextExt;
+use opentelemetry::Context;
 use opentelemetry::{global, propagation::Injector};
+use std::collections::HashMap;
 use tracing::*;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::prelude::*;
-use opentelemetry::Context;
-use opentelemetry::trace::TraceContextExt;
 use tracing_subscriber::{fmt, registry};
 
-struct MetadataMap<'a>(&'a mut tonic::metadata::MetadataMap);
+struct MetadataMap(HashMap<String, String>);
 
-impl<'a> Injector for MetadataMap<'a> {
+impl Default for MetadataMap {
+    fn default() -> Self {
+        MetadataMap(HashMap::new())
+    }
+}
+
+impl<'a> Injector for MetadataMap {
     /// Set a key and value in the MetadataMap.  Does nothing if the key or value are not valid inputs
     fn set(&mut self, key: &str, value: String) {
-        if let Ok(key) = tonic::metadata::MetadataKey::from_bytes(key.as_bytes()) {
-            if let Ok(val) = tonic::metadata::MetadataValue::from_str(&value) {
-                self.0.insert(key, val);
-            }
-        }
+        self.0.insert(key.into(), value);
     }
 }
 
@@ -34,19 +37,14 @@ async fn greet() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static
     tracing::warn!(span_trace_id = ?span.context().span().span_context().trace_id(), "pre_run");
     tracing::warn!(ctx_span_id = ?Context::current().span().span_context().span_id(), "pre_run");
 
+    let mut client = GreeterClient::connect("http://[::1]:50051").await?;
 
-    let mut client = GreeterClient::connect("http://[::1]:50051")
-        .await?;
-
-    let mut request = tonic::Request::new(HelloRequest {
+    let request = tonic::Request::new(HelloRequest {
         name: "Tonic".into(),
     });
 
     global::get_text_map_propagator(|propagator| {
-        propagator.inject_context(
-            &span.context(),
-            &mut MetadataMap(request.metadata_mut()),
-        )
+        propagator.inject_context(&span.context(), &mut MetadataMap::default())
     });
     let inner_span = info_span!("make_grpc_request");
     inner_span.set_parent(span.context());
@@ -55,10 +53,7 @@ async fn greet() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static
     tracing::warn!(span_span_id = ?inner_span.context().span().span_context().span_id(), "pre_run");
     tracing::warn!(span_trace_id = ?inner_span.context().span().span_context().trace_id(), "pre_run");
     tracing::warn!(ctx_span_id = ?inner_span.context().span().span_context().span_id(), "pre_run");
-    let response = client
-        .say_hello(request)
-        .instrument(inner_span)
-        .await?;
+    let response = client.say_hello(request).instrument(inner_span).await?;
 
     info!("Response received: {:?}", response);
     Ok(())
@@ -68,7 +63,7 @@ async fn greet() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
     global::set_text_map_propagator(TraceContextPropagator::new());
 
-    let subscriber =   registry().with(fmt::layer().without_time().with_target(false).boxed());
+    let subscriber = registry().with(fmt::layer().without_time().with_target(false).boxed());
 
     let tracer = opentelemetry_jaeger::new_agent_pipeline()
         .with_service_name("grpc-client")
