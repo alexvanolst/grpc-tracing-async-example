@@ -1,6 +1,8 @@
 # GRPC example
 
-Example showing [Tonic] client and server interaction with OpenTelemetry context propagation.  [tracing_opentelemetry](https://docs.rs/tracing-opentelemetry/0.4.0/tracing_opentelemetry/) is used to hook into the [tracing](https://github.com/tokio-rs/tracing) ecosystem, which enables drop-in replacements for [log](https://github.com/rust-lang/log) macros and an `#[instrument]` macro that will automatically add spans to your functions.  
+Example with some rather manual span linking to preserve the root trace when work done by server outlives the request
+
+See the `stringy-propagation` branch for an example using passing plain strings rather than grpc headers
 
 [Tonic]: https://github.com/hyperium/tonic
 
@@ -20,5 +22,3 @@ $ cargo run --bin grpc-client
 # View spans (see the image below)
 $ firefox http://localhost:16686/
 ```
-
-![Jaeger UI](trace.png)
