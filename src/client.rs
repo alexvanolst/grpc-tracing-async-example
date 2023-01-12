@@ -4,21 +4,23 @@ use opentelemetry::sdk::propagation::TraceContextPropagator;
 use opentelemetry::trace::TraceContextExt;
 use opentelemetry::Context;
 use opentelemetry::{global, propagation::Injector};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::*;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, registry};
 
-struct MetadataMap(HashMap<String, String>);
+#[derive(Serialize, Deserialize)]
+struct OwnedMetadataMap(HashMap<String, String>);
 
-impl Default for MetadataMap {
+impl Default for OwnedMetadataMap {
     fn default() -> Self {
-        MetadataMap(HashMap::new())
+        OwnedMetadataMap(HashMap::new())
     }
 }
 
-impl<'a> Injector for MetadataMap {
+impl<'a> Injector for OwnedMetadataMap {
     /// Set a key and value in the MetadataMap.  Does nothing if the key or value are not valid inputs
     fn set(&mut self, key: &str, value: String) {
         self.0.insert(key.into(), value);
@@ -39,12 +41,10 @@ async fn greet() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static
 
     let mut client = GreeterClient::connect("http://[::1]:50051").await?;
 
-    let request = tonic::Request::new(HelloRequest {
-        name: "Tonic".into(),
-    });
+    let mut owned_metadata = OwnedMetadataMap::default();
 
     global::get_text_map_propagator(|propagator| {
-        propagator.inject_context(&span.context(), &mut MetadataMap::default())
+        propagator.inject_context(&span.context(), &mut owned_metadata)
     });
     let inner_span = info_span!("make_grpc_request");
     inner_span.set_parent(span.context());
@@ -53,6 +53,10 @@ async fn greet() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static
     tracing::warn!(span_span_id = ?inner_span.context().span().span_context().span_id(), "pre_run");
     tracing::warn!(span_trace_id = ?inner_span.context().span().span_context().trace_id(), "pre_run");
     tracing::warn!(ctx_span_id = ?inner_span.context().span().span_context().span_id(), "pre_run");
+
+    let oof = serde_json::to_string(&owned_metadata);
+    let request = tonic::Request::new(HelloRequest { name: oof.unwrap() });
+
     let response = client.say_hello(request).instrument(inner_span).await?;
 
     info!("Response received: {:?}", response);

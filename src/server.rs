@@ -4,8 +4,8 @@ use opentelemetry::sdk::propagation::TraceContextPropagator;
 use opentelemetry::trace::TraceContextExt;
 use opentelemetry::Context;
 use opentelemetry::{global, propagation::Extractor};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tonic::metadata::KeyRef;
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::*;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -16,6 +16,9 @@ use tracing_subscriber::{fmt, registry};
 pub mod hello_world {
     tonic::include_proto!("helloworld");
 }
+
+#[derive(Serialize, Deserialize)]
+struct OwnedMetadataMap(pub HashMap<String, String>);
 
 struct MetadataMap<'a>(&'a HashMap<String, String>);
 
@@ -60,17 +63,8 @@ impl Greeter for MyGreeter {
         &self,
         request: Request<HelloRequest>, // Accept request of type HelloRequest
     ) -> Result<Response<HelloReply>, Status> {
-        for key in request.metadata().keys() {
-            match key {
-                KeyRef::Ascii(x) => {
-                    let mut opt = request.metadata().get(x).map(|v| v.to_str().unwrap());
-                    let value = opt.get_or_insert("no value");
-                    tracing::info!("Got metadata at {:?}: {}", key, value)
-                }
-                KeyRef::Binary(_) => {}
-            }
-        }
-        let context_map = HashMap::new(); // TODO
+        let json = request.into_inner().name;
+        let context_map = serde_json::from_str(&json).unwrap();
 
         let parent_cx =
             global::get_text_map_propagator(|prop| prop.extract(&MetadataMap(&context_map)));
@@ -80,16 +74,12 @@ impl Greeter for MyGreeter {
         tracing::warn!(span_trace_id = ?Span::current().context().span().span_context().trace_id(), "pre_run");
         tracing::warn!(ctx_span_id = ?Context::current().span().span_context().span_id());
 
-        let name = request.into_inner().name;
         let current = Span::current().context();
-        let fork_name = name.clone();
         let _jh =
-            tokio::spawn(
-                async move { expensive_fn(format!("Got name: {:?}", fork_name), current) },
-            );
+            tokio::spawn(async move { expensive_fn(format!("Got name: {:?}", "Name"), current) });
         // Return an instance of type HelloReply
         let reply = hello_world::HelloReply {
-            message: format!("Hello {}!", name),
+            message: "hello".to_string(),
         };
 
         Ok(Response::new(reply))
